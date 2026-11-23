@@ -34,8 +34,8 @@ func Identities(ctx context.Context) (map[int]Identity, error) {
 		start := p.Proc.P_starttime
 		out[int(p.Proc.P_pid)] = Identity{
 			PPID:      int(p.Eproc.Ppid),
-			Start:     strconv.FormatInt(int64(start.Sec), 10) + "." + strconv.FormatInt(int64(start.Usec), 10),
-			StartedAt: time.Unix(int64(start.Sec), int64(start.Usec)*int64(time.Microsecond)),
+			Start:     strconv.FormatInt(start.Sec, 10) + "." + strconv.FormatInt(int64(start.Usec), 10),
+			StartedAt: time.Unix(start.Sec, int64(start.Usec)*int64(time.Microsecond)),
 		}
 	}
 	return out, nil
