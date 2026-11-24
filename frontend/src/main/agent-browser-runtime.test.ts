@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	AgentBrowserRuntime,
 	AGENT_BROWSER_UNIX_SOCKET_PATH_MAX_BYTES,
@@ -15,6 +15,12 @@ import {
 	validateAgentBrowserArguments,
 } from "./agent-browser-runtime";
 
+vi.mock("node:fs/promises", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("node:fs/promises")>();
+	return { ...actual, symlink: vi.fn(actual.symlink) };
+});
+
+// Only for the native binary, which opens real Unix sockets and so needs a short path.
 const shortTempDir = process.platform === "win32" ? os.tmpdir() : "/tmp";
 
 describe("agent-browser command policy", () => {
@@ -109,14 +115,28 @@ describe("agent-browser runtime lifecycle", () => {
 		closeTarget: () => undefined,
 	};
 
+	const roots: string[] = [];
+	afterEach(async () => {
+		await Promise.all(roots.splice(0).map(cleanup));
+	});
+
+	// Only os.tmpdir() is written to: DevCo's check sandbox (and any other confined run) refuses
+	// /tmp. The socket directory is overridden so the runtime makes no /tmp alias, and sits beside
+	// dataDir because the runtime never removes an override. A temp folder can be too long for a
+	// Unix socket path (macOS), so the default platform is "win32", which in the runtime turns off
+	// only that length check and the /tmp alias scan. socketAlias keeps the runtime's own defaults.
 	async function fixture(overrides: {
 		start?: () => Promise<string>;
 		close?: () => Promise<void>;
 		platform?: NodeJS.Platform;
 		processRunner?: (...args: unknown[]) => Promise<{ stdout: string; stderr: string; exitCode: number }>;
 		socketDir?: string;
+		socketAlias?: boolean;
 	} = {}) {
-		const dataDir = await mkdtemp(path.join(shortTempDir, "ao-browser-runtime-test-"));
+		const root = await mkdtemp(path.join(os.tmpdir(), "ao-browser-runtime-test-"));
+		roots.push(root);
+		const dataDir = path.join(root, "data");
+		await mkdir(dataDir);
 		const bridge = {
 			start: vi.fn(overrides.start ?? (async () => "ws://127.0.0.1:1/fixture")),
 			close: vi.fn(overrides.close ?? (async () => undefined)),
@@ -130,8 +150,9 @@ describe("agent-browser runtime lifecycle", () => {
 		const runtime = new AgentBrowserRuntime({
 			binaryPath: process.execPath,
 			dataDir,
-			...(overrides.socketDir ? { socketDir: overrides.socketDir } : {}),
-			...(overrides.platform ? { platform: overrides.platform } : {}),
+			...(overrides.socketAlias
+				? {}
+				: { socketDir: overrides.socketDir ?? path.join(root, "sockets"), platform: overrides.platform ?? "win32" }),
 			bridgeFactory: () => bridge,
 			processRunner: processRunner as never,
 			processAlive: () => false,
@@ -257,7 +278,15 @@ describe("agent-browser runtime lifecycle", () => {
 	});
 
 	it("uses a private explicit socket directory and a bounded namespace", async () => {
-		const { dataDir, processRunner, runtime } = await fixture();
+		const { dataDir, processRunner, runtime } = await fixture({ socketAlias: true });
+		// The runtime's default alias is in /tmp, which a confined run cannot write to: make the same
+		// link in a temp folder instead.
+		const aliasRoot = await mkdtemp(path.join(os.tmpdir(), "ao-browser-alias-root-"));
+		roots.push(aliasRoot);
+		const { symlink: realSymlink } = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+		vi.mocked(symlink).mockClear().mockImplementation(async (target, alias, type) => {
+			await realSymlink(target, path.join(aliasRoot, path.basename(String(alias))), type);
+		});
 		try {
 			await runtime.run("session-1", ["snapshot"], provider);
 			const environment = (processRunner.mock.calls[0] as unknown[])[2] as NodeJS.ProcessEnv;
@@ -268,6 +297,7 @@ describe("agent-browser runtime lifecycle", () => {
 				expect(socketDir).toMatch(/[\\/]s$/);
 			} else {
 				expect(socketDir).toMatch(/^\/tmp\/ao-br-/);
+				expect(symlink).toHaveBeenCalledExactlyOnceWith(expect.stringContaining(path.join(dataDir, "r-")), socketDir, "dir");
 			}
 			expect(namespace).toMatch(/^ao-[0-9a-f]{4}-[0-9a-f]{12}$/);
 			const socketPath = agentBrowserSocketPath(socketDir, namespace);
@@ -275,9 +305,12 @@ describe("agent-browser runtime lifecycle", () => {
 				process.platform === "win32" ? Number.MAX_SAFE_INTEGER : AGENT_BROWSER_UNIX_SOCKET_PATH_MAX_BYTES,
 			);
 			if (process.platform !== "win32") {
-				expect((await stat(socketDir)).mode & 0o777).toBe(0o700);
+				const linked = await stat(path.join(aliasRoot, path.basename(socketDir)));
+				expect(linked.isDirectory()).toBe(true);
+				expect(linked.mode & 0o777).toBe(0o700);
 			}
 		} finally {
+			vi.mocked(symlink).mockReset();
 			await runtime.dispose();
 			await cleanup(dataDir);
 		}
@@ -586,9 +619,9 @@ describe("agent-browser runtime lifecycle", () => {
 	});
 
 	it.skipIf(process.platform === "win32")("removes only confirmed-dead socket aliases owned by this data root", async () => {
-		const dataDir = await mkdtemp(path.join(shortTempDir, "ao-browser-alias-data-"));
-		const aliasRoot = await mkdtemp(path.join(shortTempDir, "ao-browser-alias-root-"));
-		const foreignRoot = await mkdtemp(path.join(shortTempDir, "ao-browser-alias-foreign-"));
+		const dataDir = await mkdtemp(path.join(os.tmpdir(), "ao-browser-alias-data-"));
+		const aliasRoot = await mkdtemp(path.join(os.tmpdir(), "ao-browser-alias-root-"));
+		const foreignRoot = await mkdtemp(path.join(os.tmpdir(), "ao-browser-alias-foreign-"));
 		try {
 			const deadTarget = path.join(dataDir, "r-aaaaaaaaaa", "s");
 			const liveTarget = path.join(dataDir, "r-bbbbbbbbbb", "s");
