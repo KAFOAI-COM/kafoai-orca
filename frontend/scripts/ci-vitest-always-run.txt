@@ -26,3 +26,5 @@ src/main/ui-settings.test.ts
 src/renderer/lib/render-frame.test.ts
 src/renderer/style-invalidation.test.ts
 src/renderer/titlebar-drag-regions.test.tsx
+scripts/devco-sandbox-skips.test.mjs
+scripts/devco-check-runner.test.mjs

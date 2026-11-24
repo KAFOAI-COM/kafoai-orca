@@ -63,6 +63,15 @@ test('the desktop harness marks and the daemon harness list reach the mobile par
   assert.ok(!pickLanes(pr(['backend/internal/domain/session.go'])).lanes.includes('mobile'));
 });
 
+test('a DevCo check script runs the frontend lane with all vitest files, and keeps the config lane', () => {
+  for (const path of ['scripts/devco-sandbox-skips.mjs', 'scripts/devco-check-runner.mjs', 'scripts/devco-frontend-test.mjs']) {
+    const pick = pickLanes(pr([path]));
+    assert.deepEqual(pick.lanes, ['frontend', 'config']);
+    assert.equal(pick.vitest, 'all');
+  }
+  assert.deepEqual(pickLanes(pr(['scripts/daemon-build.sh'])).lanes, ['config']);
+});
+
 test('the renderer typechecks against cloud-client types', () => {
   assert.deepEqual(pickLanes(pr(['packages/cloud-client/src/types.ts'])).lanes, ['frontend', 'boundary', 'cloud']);
   assert.deepEqual(pickLanes(pr(['contracts/cloud/openapi.yaml'])).lanes, ['cloud']);
@@ -115,6 +124,12 @@ test('every lane is used by a workflow', () => {
   for (const lane of Object.keys(LANES)) {
     assert.ok(workflows.includes(`'${lane}')`), `no workflow job runs lane ${lane}`);
   }
+});
+
+test('every vitest run includes the tests of the DevCo check, which read other tests from disk', () => {
+  const list = readFileSync(new URL('../frontend/scripts/ci-vitest-always-run.txt', import.meta.url), 'utf8').split('\n');
+  assert.ok(list.includes('scripts/devco-sandbox-skips.test.mjs'));
+  assert.ok(list.includes('scripts/devco-check-runner.test.mjs'));
 });
 
 test('every always-run vitest file exists', () => {
