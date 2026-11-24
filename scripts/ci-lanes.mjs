@@ -6,7 +6,8 @@ const FRONTEND = /^(frontend\/(?!src\/docs\/|native\/)|packages\/(product-ui|sha
 export const LANES = {
   go: [/^backend\//, /^go\.work(\.sum)?$/, /^contracts\/session-start-interface\.json$/, /^frontend\/scripts\/prepare-cloudflared\.mjs$/, /^frontend\/src\/api\/schema\.ts$/, /^package(-lock)?\.json$/, /^\.github\/scripts\/go-test-parallel\.sh$/],
   'cli-e2e': [/^backend\//, /^test\/cli\//],
-  frontend: [FRONTEND],
+  // The DevCo check scripts are tested by vitest (frontend/scripts/devco-*.test.mjs).
+  frontend: [FRONTEND, /^scripts\/devco-/],
   docs: [/^frontend\/src\/docs\//],
   boundary: [FRONTEND, /^backend\/internal\/httpd\//],
   cloud: [/^packages\/cloud-client\//, /^contracts\/cloud\//],
