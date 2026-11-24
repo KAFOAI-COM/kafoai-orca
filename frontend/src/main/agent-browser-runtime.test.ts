@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { EventEmitter } from "node:events";
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -15,6 +16,7 @@ import {
 	validateAgentBrowserArguments,
 } from "./agent-browser-runtime";
 
+// Needs the node environment above: in jsdom the runtime gets the real module instead of this one.
 vi.mock("node:fs/promises", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("node:fs/promises")>();
 	return { ...actual, symlink: vi.fn(actual.symlink) };
